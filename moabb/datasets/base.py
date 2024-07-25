@@ -349,6 +349,9 @@ class BaseDataset(metaclass=MetaclassDataset):
         self.doi = doi
         self.unit_factor = unit_factor
 
+        self.add_noise = False
+        self.noise_intensity = 0.0
+
     def _create_process_pipeline(self):
         return Pipeline(
             [
@@ -361,14 +364,16 @@ class BaseDataset(metaclass=MetaclassDataset):
                 ),
             ]
         )
+    
+    def allow_add_noise(self, noise_intensity = 0.5):
+        self.add_noise = True
+        self.noise_intensity = noise_intensity
 
     def get_data(
         self,
         subjects=None,
         cache_config=None,
         process_pipeline=None,
-        add_noise=False,
-        noise_intensity=0.5
     ):
         """
         Return the data corresponding to a list of subjects.
@@ -417,7 +422,6 @@ class BaseDataset(metaclass=MetaclassDataset):
         data: Dict
             dict containing the raw data
         """
-        print("subjects, cache_config, process_pipeline:", subjects, cache_config, process_pipeline)
 
         if subjects is None:
             subjects = self.subject_list
@@ -426,11 +430,9 @@ class BaseDataset(metaclass=MetaclassDataset):
             raise ValueError("subjects must be a list")
 
         cache_config = CacheConfig.make(cache_config)
-        process_pipeline_was_none = False
 
         if process_pipeline is None:
             process_pipeline = self._create_process_pipeline()
-            process_pipeline_was_none = True
 
         data = dict()
         for subject in subjects:
@@ -441,17 +443,6 @@ class BaseDataset(metaclass=MetaclassDataset):
                 cache_config,
                 process_pipeline,
             )
-
-            if add_noise and process_pipeline_was_none:
-                print("Adding Noise....")
-                import numpy as np
-                for session in data[subject].keys():
-                    for run in data[subject][session].keys():
-                        raw = data[subject][session][run]
-                        eeg_data = raw.get_data(picks=np.arange(22))  # Select the first 22 channels (EEG channels)
-                        noise = np.random.normal(0, noise_intensity, eeg_data.shape)
-                        eeg_data_noisy = eeg_data + noise  # Add noise and constant value to EEG data
-                        data[subject][session][run]._data[:22, :] = eeg_data_noisy
 
         check_subject_names(data)
         check_session_names(data)

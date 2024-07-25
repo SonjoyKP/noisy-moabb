@@ -33,6 +33,8 @@ def load_data(
     base_url=BNCI_URL,
     only_filenames=False,
     verbose=None,
+    add_noise = False,
+    noise_intensity = 0.5,
 ):  # noqa: D301
     """Get paths to local copies of a BNCI dataset files.
 
@@ -116,6 +118,8 @@ def load_data(
         baseurl_list[dataset],
         only_filenames,
         verbose,
+        add_noise = add_noise,
+        noise_intensity = noise_intensity,
     )
 
 
@@ -128,7 +132,10 @@ def _load_data_001_2014(
     base_url=BNCI_URL,
     only_filenames=False,
     verbose=None,
+    add_noise = False,
+    noise_intensity = 0.5,
 ):
+    #print("In _load_data_001_2014.........................", add_noise, noise_intensity, only_filenames)
     """Load data for 001-2014 dataset."""
     if (subject < 1) or (subject > 9):
         raise ValueError("Subject must be between 1 and 9. Got %d." % subject)
@@ -153,11 +160,26 @@ def _load_data_001_2014(
         runs, ev = _convert_mi(filename[0], ch_names, ch_types)
         # FIXME: deal with run with no event (1:3) and name them
         sessions[f"{session_idx}{_map[r]}"] = {
-            str(ii): run for ii, run in enumerate(runs)
+            str(ii): _add_noise_for_single_run(run, add_noise = add_noise, noise_intensity = noise_intensity) for ii, run in enumerate(runs)
         }
     if only_filenames:
         return filenames
+
     return sessions
+
+def _add_noise_for_single_run(run, add_noise = False, noise_intensity = 0.5,):
+    if not add_noise:
+        return run
+    
+    #print("Before Noise:\n",run.get_data())
+    
+    eeg_data = run.get_data(picks=np.arange(22))  # Select the first 22 channels (EEG channels)
+    noise = np.random.normal(0, noise_intensity, eeg_data.shape)
+    eeg_data_noisy = eeg_data + noise  # Add noise and constant value to EEG data
+    run._data[:22, :] = eeg_data_noisy
+
+    #print("After Noise:\n",run.get_data())
+    return run
 
 
 @verbose
@@ -735,7 +757,7 @@ class MNEBNCI(BaseDataset):
 
     def _get_single_subject_data(self, subject):
         """Return data for a single subject."""
-        sessions = load_data(subject=subject, dataset=self.code, verbose=False)
+        sessions = load_data(subject=subject, dataset=self.code, verbose=False, add_noise=self.add_noise, noise_intensity=self.noise_intensity)
         return sessions
 
     def data_path(

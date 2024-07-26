@@ -97,6 +97,20 @@ class BaseMAMEM(BaseDataset):
         )
         self.figshare_id = figshare_id
 
+    def _add_noise_for_single_run(self, run):
+        if not self.add_noise:
+            return run
+        
+        #print("Before Noise:\n",run.get_data())
+        
+        eeg_data = run.get_data()  
+        noise = np.random.normal(0, self.noise_intensity, eeg_data.shape)
+        eeg_data_noisy = eeg_data + noise
+        run._data = eeg_data_noisy
+
+        #print("After Noise:\n",run.get_data())
+        return run
+
     def _get_single_subject_data(self, subject):
         """Return data for a single subject."""
         fnames = self.data_path(subject)
@@ -139,9 +153,9 @@ class BaseMAMEM(BaseDataset):
             if session_name not in sessions.keys():
                 sessions[session_name] = {}
             if len(sessions[session_name]) == 0:
-                sessions[session_name] = {run_name: raw}
+                sessions[session_name] = {run_name: self._add_noise_for_single_run(raw)}
             else:
-                sessions[session_name][run_name] = raw
+                sessions[session_name][run_name] = self._add_noise_for_single_run(raw)
         return sessions
 
     def data_path(

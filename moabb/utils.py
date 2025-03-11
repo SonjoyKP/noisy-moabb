@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from mne import get_config, set_config
 from mne import set_log_level as sll
+from mne.utils import get_config_path
 
 
 if TYPE_CHECKING:
@@ -36,64 +37,8 @@ def _set_random_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
-def _set_tensorflow_seed(seed: int) -> None:
-    """Set the seed for TensorFlow.
-
-    Parameters
-    ----------
-    seed: int
-        The random seed to use.
-    Returns
-    -------
-    None
-    """
-    try:
-        import tensorflow as tf
-
-        tf.random.set_seed(seed)  # tf cpu fix seed
-        os.environ["TF_DETERMINISTIC_OPS"] = (
-            "1"  # tf gpu fix seed, please `pip install tensorflow-determinism` first
-        )
-        tf.keras.utils.set_random_seed(seed)
-
-    except ImportError:
-        print(
-            "We try to set the tensorflow seeds, but it seems that tensorflow is not installed. "
-            "Please refer to `https://www.tensorflow.org/` to install if you need to use "
-            "this deep learning module."
-        )
-        return False
-
-
-def _set_torch_seed(seed: int) -> None:
-    """Set the seed for PyTorch.
-
-    Parameters
-    ----------
-    seed: int
-        The random seed to use.
-    Returns
-    -------
-    None
-    """
-    try:
-        import torch
-
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
-    except ImportError:
-        print(
-            "We try to set the torch seeds, but it seems that torch is not installed. "
-            "Please refer to `https://pytorch.org/` to install if you need to use "
-            "this deep learning module."
-        )
-        return False
-
-
 def setup_seed(seed: int) -> None:
-    """Set the seed for random, numpy, TensorFlow and PyTorch.
+    """Set the seed for random, numpy.
 
     Parameters
     ----------
@@ -104,14 +49,8 @@ def setup_seed(seed: int) -> None:
     None
     """
     _set_random_seed(seed)
-    # check if the return is bool
-    tensorflow_return = _set_tensorflow_seed(seed)
-    torch_return = _set_torch_seed(seed)
 
-    if tensorflow_return is False or torch_return is False:
-        return False
-    else:
-        return None
+    return None
 
 
 def set_log_level(level="INFO"):
@@ -131,34 +70,75 @@ def set_log_level(level="INFO"):
     )
 
 
+# Cross-platform file-locking
+if sys.platform.startswith("win"):
+    import msvcrt
+
+    def lock_file(f):
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+
+    def unlock_file(f):
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def lock_file(f):
+        fcntl.flock(f, fcntl.LOCK_EX)
+
+    def unlock_file(f):
+        fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def set_download_dir(path):
-    """Set the download directory if required to change from default mne path.
+    """Set the download directory if required to change from default MNE path.
 
     Parameters
     ----------
     path : None | str
-    The new storage location, if it does not exist, a warning is raised and the
-    path is created
-    If None, and MNE_DATA config does not exist, a warning is raised and the
-    storage location is set to the MNE default directory
+        The new storage location. If it does not exist, a warning is raised and the
+        path is created.
+        If None, and MNE_DATA config does not exist, a warning is raised and the
+        storage location is set to the MNE default directory.
     """
-    if path is None:
-        if get_config("MNE_DATA") is None:
-            print(
-                "MNE_DATA is not already configured. It will be set to "
-                "default location in the home directory - "
-                + osp.join(osp.expanduser("~"), "mne_data")
-                + "All datasets will be downloaded to this location, if anything is "
-                "already downloaded, please move manually to this location"
-            )
+    config_path = get_config_path()
+    # Use the config file itself as the lock file
+    lock_file_path = config_path + ".lock"
 
-            set_config("MNE_DATA", osp.join(osp.expanduser("~"), "mne_data"))
-    else:
-        # Check if the path exists, if not, create it
-        if not osp.isdir(path):
-            print("The path given does not exist, creating it..")
-            os.makedirs(path)
-        set_config("MNE_DATA", path)
+    # Ensure the config directory exists
+    config_dir = osp.dirname(config_path)
+    if not osp.exists(config_dir):
+        os.makedirs(config_dir)
+
+    # Open the lock file
+    with open(lock_file_path, "w") as lock_file_obj:
+        # Acquire the lock
+        lock_file(lock_file_obj)
+        try:
+            # Critical section: read and write config
+            if path is None:
+                if get_config("MNE_DATA") is None:
+                    print(
+                        "MNE_DATA is not already configured. It will be set to "
+                        "default location in the home directory - "
+                        + osp.join(osp.expanduser("~"), "mne_data")
+                        + ". All datasets will be downloaded to this location. "
+                        "If anything is already downloaded, please move manually to this location."
+                    )
+                    default_path = osp.join(osp.expanduser("~"), "mne_data")
+                    set_config("MNE_DATA", default_path)
+            else:
+                # Create the directory if it doesn't exist
+                if not osp.isdir(path):
+                    print("The path given does not exist, creating it..")
+                    os.makedirs(path, exist_ok=True)
+                # Only set the config if it's different
+                current_mne_data = get_config("MNE_DATA")
+                if current_mne_data != path:
+                    set_config("MNE_DATA", path)
+        finally:
+            # Release the lock
+            unlock_file(lock_file_obj)
 
 
 def make_process_pipelines(
